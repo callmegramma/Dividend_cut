@@ -1,20 +1,32 @@
 #Imports
-#Models
+#Data
 import pandas as pd
 import numpy as np
-import plotly as plt
-pd.options.plotting.backend = "plotly"
+#import plotly as plt
+#pd.options.plotting.backend = "plotly"
+#import matplotlib.pyplot as mlt
 
+#Processing
 from sklearn.impute import KNNImputer
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 
+#Models
+from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.ensemble import RandomForestClassifier #fails for some reason
 from sklearn.linear_model import SGDClassifier
 
+#Metrics
+from sklearn.metrics import ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report
+from sklearn.metrics import DetCurveDisplay
+from sklearn.metrics import det_curve
 
 # Becasue we're working with Balance sheet / Profit Statement items we need can't just backfill/pad missing values
 # We could try to impute missing values using MICE (multiple interative imputation) and some sensible financial relationships
@@ -48,7 +60,7 @@ print(len(check[check['Div_Cut']>0])," out of ",len(check)," firms or ",
 check.plot().show()
 
 #Let's see how cuts vary across years at this threshold
-check = clean_data[['Div_Cut']].groupby(axis='index', level=[1]).mean()
+check = clean_data[['Div_Cut']].groupby(axis='index', level=[1]).sum()
 check.sort_values(by='Div_Cut', axis=0, ascending=False)
 check.plot().show()
 
@@ -88,7 +100,7 @@ imputed_data.index = imputed_data.index.droplevel(0)
 # and I want to reduce overfitting
 
 #Set Seed to reproduce results
-seed = 18531856
+#seed = 18531856
 
 #As far as I can see there's no test_train split that acounts for both groups and time in sklearn
 #Therefore, I will write my own, even if this can be a bit dangerous in my experience
@@ -121,6 +133,8 @@ print(len(X_test)+len(X_train)==len(imputed_data))
 Firm_Encoder = OneHotEncoder(categories='auto', drop=None, sparse=True, handle_unknown='error')
 #Scale features that are not divident_retuns, finanial_health_score or firm_id by removing the mean
 Values_Encoder = RobustScaler(with_centering=True, with_scaling=True, quantile_range=(25.0, 75.0), copy=True)
+Values_Encoder_2 = StandardScaler()
+
 Values_features = ['ASSETS', 'BPS', 'CAPEX', 'CFPS', 'CF_FIN',
        'CF_INV', 'CF_OP', 'DEPR_AMORT', 'EBIT', 'EBITDA', 'EPS', 'EPS_GAAP',
        'EPS_NONGAAP', 'FCF', 'G_A_EXP', 'INT_EXP', 'NDT', 'NET', 'NETBG',
@@ -142,17 +156,54 @@ data_transformer = ColumnTransformer(
         ('Values_Enc_1',Values_Encoder, Values_features)
     ],remainder='passthrough')
 
-#Fit to the data and transform it
-data_transformer.fit(X_train)
-X_train_trans = data_transformer.transform(X_train)
+data_transformer_2 = ColumnTransformer(
+    transformers=[
+        ('firm', Firm_Encoder,['firm_id']),
+        ('Values_Enc_1',Values_Encoder_2, Values_features)
+    ],remainder='passthrough')
 
-#Fit a Logit model on the data - Fails to converge
+#Fit to the data and transform it
+data_transformer_2.fit(X_train)
+X_train_trans = data_transformer_2.transform(X_train)
+
+#Fit a Logit model on the data -
+# CV Fails to converge
+Logit_model = LogisticRegression()
+
+Logit_model.fit(X_train_trans, y_train)
+
+Logit_predictions = Logit_model.predict(data_transformer_2.transform(X_test))
 
 #Fit a FR model on the data - Fails to converge
 
 RF_model = RandomForestClassifier()
 
+RF_model.fit(X_train_trans, y_train)
+
+RF_predictions = RF_model.predict(data_transformer_2.transform(X_test))
 
 # I want to train the model via a cross-validated sample of firms
 
+#Evaluation
+
+#Logit
+#d_curve = det_curve(y_test,Logit_predictions)
+print(classification_report(y_test, Logit_predictions))
+confusion_matrix(y_test, Logit_predictions)
+
+#Random Forest
+#d_curve = det_curve(y_test,RF_predictions)
+print(classification_report(y_test, RF_predictions))
+confusion_matrix(y_test, RF_predictions)
+
+tn, fp, fn, tp = confusion_matrix(y_test, Logit_predictions).ravel()
+del(tn, fp, fn, tp)
+
+#Display evaluations
+
+ConfusionMatrixDisplay(confusion_matrix(y_test, Logit_predictions)).plot()
+
+DetCurveDisplay(d_curve).plot()
+
+mlt.show()
 
